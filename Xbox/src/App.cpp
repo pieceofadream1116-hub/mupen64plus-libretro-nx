@@ -55,7 +55,6 @@ const char* XboxButtonName(int button)
 		case pad::LeftStick: return "Left stick click";
 		case pad::RightStick: return "Right stick click";
 		case kNoButton: return "(right stick only)";
-		case pad::RightStick: return "Right stick click";
 		case pad::LeftShoulder: return "LB";
 		case pad::RightShoulder: return "RB";
 		case pad::LeftTrigger: return "LT";

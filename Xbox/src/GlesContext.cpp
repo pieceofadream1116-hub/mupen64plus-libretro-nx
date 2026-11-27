@@ -5,6 +5,10 @@
 #include <algorithm>
 
 #define EGL_EGLEXT_PROTOTYPES
+#define GL_GLEXT_PROTOTYPES
+#ifndef GL_GLES_PROTOTYPES
+#define GL_GLES_PROTOTYPES 1
+#endif
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLES3/gl3.h>
@@ -21,6 +25,51 @@
 #ifndef EGL_OPENGL_ES3_BIT_KHR
 #define EGL_OPENGL_ES3_BIT_KHR 0x0040
 #endif
+
+
+namespace {
+
+// The few GL functions the app itself calls, taken from ANGLE at run time (the same way the core gets them)
+struct GlFunctions
+{
+	const GLubyte*(GL_APIENTRY* GetString)(GLenum) = nullptr;
+	void(GL_APIENTRY* DeleteFramebuffers)(GLsizei, const GLuint*) = nullptr;
+	void(GL_APIENTRY* DeleteRenderbuffers)(GLsizei, const GLuint*) = nullptr;
+	void(GL_APIENTRY* GenFramebuffers)(GLsizei, GLuint*) = nullptr;
+	void(GL_APIENTRY* BindFramebuffer)(GLenum, GLuint) = nullptr;
+	void(GL_APIENTRY* GenRenderbuffers)(GLsizei, GLuint*) = nullptr;
+	void(GL_APIENTRY* BindRenderbuffer)(GLenum, GLuint) = nullptr;
+	void(GL_APIENTRY* RenderbufferStorage)(GLenum, GLenum, GLsizei, GLsizei) = nullptr;
+	void(GL_APIENTRY* FramebufferRenderbuffer)(GLenum, GLenum, GLenum, GLuint) = nullptr;
+	GLenum(GL_APIENTRY* CheckFramebufferStatus)(GLenum) = nullptr;
+	void(GL_APIENTRY* ClearColor)(GLfloat, GLfloat, GLfloat, GLfloat) = nullptr;
+	void(GL_APIENTRY* Clear)(GLbitfield) = nullptr;
+	void(GL_APIENTRY* PixelStorei)(GLenum, GLint) = nullptr;
+	void(GL_APIENTRY* ReadPixels)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void*) = nullptr;
+
+	bool Load()
+	{
+		GetString = reinterpret_cast<decltype(GetString)>(eglGetProcAddress("glGetString"));
+		DeleteFramebuffers = reinterpret_cast<decltype(DeleteFramebuffers)>(eglGetProcAddress("glDeleteFramebuffers"));
+		DeleteRenderbuffers = reinterpret_cast<decltype(DeleteRenderbuffers)>(eglGetProcAddress("glDeleteRenderbuffers"));
+		GenFramebuffers = reinterpret_cast<decltype(GenFramebuffers)>(eglGetProcAddress("glGenFramebuffers"));
+		BindFramebuffer = reinterpret_cast<decltype(BindFramebuffer)>(eglGetProcAddress("glBindFramebuffer"));
+		GenRenderbuffers = reinterpret_cast<decltype(GenRenderbuffers)>(eglGetProcAddress("glGenRenderbuffers"));
+		BindRenderbuffer = reinterpret_cast<decltype(BindRenderbuffer)>(eglGetProcAddress("glBindRenderbuffer"));
+		RenderbufferStorage = reinterpret_cast<decltype(RenderbufferStorage)>(eglGetProcAddress("glRenderbufferStorage"));
+		FramebufferRenderbuffer = reinterpret_cast<decltype(FramebufferRenderbuffer)>(eglGetProcAddress("glFramebufferRenderbuffer"));
+		CheckFramebufferStatus = reinterpret_cast<decltype(CheckFramebufferStatus)>(eglGetProcAddress("glCheckFramebufferStatus"));
+		ClearColor = reinterpret_cast<decltype(ClearColor)>(eglGetProcAddress("glClearColor"));
+		Clear = reinterpret_cast<decltype(Clear)>(eglGetProcAddress("glClear"));
+		PixelStorei = reinterpret_cast<decltype(PixelStorei)>(eglGetProcAddress("glPixelStorei"));
+		ReadPixels = reinterpret_cast<decltype(ReadPixels)>(eglGetProcAddress("glReadPixels"));
+		return GetString && DeleteFramebuffers && DeleteRenderbuffers && GenFramebuffers && BindFramebuffer && GenRenderbuffers && BindRenderbuffer && RenderbufferStorage && FramebufferRenderbuffer && CheckFramebufferStatus && ClearColor && Clear && PixelStorei && ReadPixels;
+	}
+};
+
+GlFunctions gl;
+
+} // namespace
 
 GlesContext::~GlesContext()
 {
@@ -73,8 +122,13 @@ bool GlesContext::Create(std::string& error)
 		Destroy();
 		return false;
 	}
-	const char* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
-	const char* glVersion = reinterpret_cast<const char*>(glGetString(GL_VERSION));
+	if(!gl.Load()) {
+		error = "OpenGL ES (ANGLE): its functions could not be found";
+		Destroy();
+		return false;
+	}
+	const char* renderer = reinterpret_cast<const char*>(gl.GetString(GL_RENDERER));
+	const char* glVersion = reinterpret_cast<const char*>(gl.GetString(GL_VERSION));
 	uwp::Log(std::string("OpenGL ES: ") + (glVersion ? glVersion : "?") + ", " + (renderer ? renderer : "?"));
 	return true;
 }
@@ -84,15 +138,15 @@ void GlesContext::Destroy()
 	if(!_display) {
 		return;
 	}
-	if(_context && eglGetCurrentContext() == _context) {
+	if(_context && gl.DeleteFramebuffers && eglGetCurrentContext() == _context) {
 		if(_fbo) {
-			glDeleteFramebuffers(1, &_fbo);
+			gl.DeleteFramebuffers(1, &_fbo);
 		}
 		if(_color) {
-			glDeleteRenderbuffers(1, &_color);
+			gl.DeleteRenderbuffers(1, &_color);
 		}
 		if(_depth) {
-			glDeleteRenderbuffers(1, &_depth);
+			gl.DeleteRenderbuffers(1, &_depth);
 		}
 	}
 	_fbo = _color = _depth = 0;
@@ -113,31 +167,31 @@ bool GlesContext::MakeFramebuffer(unsigned width, unsigned height, bool depth, b
 		return true;
 	}
 	if(_fbo) {
-		glDeleteFramebuffers(1, &_fbo);
-		glDeleteRenderbuffers(1, &_color);
+		gl.DeleteFramebuffers(1, &_fbo);
+		gl.DeleteRenderbuffers(1, &_color);
 		if(_depth) {
-			glDeleteRenderbuffers(1, &_depth);
+			gl.DeleteRenderbuffers(1, &_depth);
 		}
 		_fbo = _color = _depth = 0;
 	}
 	_width = width;
 	_height = height;
-	glGenFramebuffers(1, &_fbo);
-	glBindFramebuffer(GL_FRAMEBUFFER, _fbo);
-	glGenRenderbuffers(1, &_color);
-	glBindRenderbuffer(GL_RENDERBUFFER, _color);
-	glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, width, height);
-	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, _color);
+	gl.GenFramebuffers(1, &_fbo);
+	gl.BindFramebuffer(GL_FRAMEBUFFER, _fbo);
+	gl.GenRenderbuffers(1, &_color);
+	gl.BindRenderbuffer(GL_RENDERBUFFER, _color);
+	gl.RenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, width, height);
+	gl.FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, _color);
 	if(depth || stencil) {
-		glGenRenderbuffers(1, &_depth);
-		glBindRenderbuffer(GL_RENDERBUFFER, _depth);
-		glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
-		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, _depth);
-		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, _depth);
+		gl.GenRenderbuffers(1, &_depth);
+		gl.BindRenderbuffer(GL_RENDERBUFFER, _depth);
+		gl.RenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+		gl.FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, _depth);
+		gl.FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, _depth);
 	}
-	GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-	glClearColor(0, 0, 0, 1);
-	glClear(GL_COLOR_BUFFER_BIT);
+	GLenum status = gl.CheckFramebufferStatus(GL_FRAMEBUFFER);
+	gl.ClearColor(0, 0, 0, 1);
+	gl.Clear(GL_COLOR_BUFFER_BIT);
 	uwp::Log("Core framebuffer " + std::to_string(width) + "x" + std::to_string(height) +
 		(status == GL_FRAMEBUFFER_COMPLETE ? "" : " [!] incomplete " + std::to_string(status)));
 	return status == GL_FRAMEBUFFER_COMPLETE;
@@ -153,9 +207,9 @@ void GlesContext::ReadPicture(unsigned width, unsigned height, std::vector<uint3
 	width = std::min(width, _width);
 	height = std::min(height, _height);
 	_rgba.resize((size_t)width * height * 4);
-	glBindFramebuffer(GL_FRAMEBUFFER, _fbo);
-	glPixelStorei(GL_PACK_ALIGNMENT, 4);
-	glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, _rgba.data());
+	gl.BindFramebuffer(GL_FRAMEBUFFER, _fbo);
+	gl.PixelStorei(GL_PACK_ALIGNMENT, 4);
+	gl.ReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, _rgba.data());
 	out.resize((size_t)width * height);
 	// GL's rows go bottom to top
 	for(unsigned y = 0; y < height; y++) {
