@@ -51,6 +51,18 @@ typedef struct tagBITMAPINFOHEADER {
   unsigned long  biClrImportant;
 } BITMAPINFOHEADER;
 #else
+#if defined(WINAPI_FAMILY) && WINAPI_FAMILY == WINAPI_FAMILY_APP
+/* UWP: wingdi.h has the info header but not the file header */
+#pragma pack(push, 2)
+struct tagBITMAPFILEHEADER {
+  unsigned short bfType;
+  unsigned long  bfSize;
+  unsigned short bfReserved1;
+  unsigned short bfReserved2;
+  unsigned long  bfOffBits;
+};
+#pragma pack(pop)
+#endif
 typedef struct tagBITMAPFILEHEADER BITMAPFILEHEADER;
 typedef struct tagBITMAPINFOHEADER BITMAPINFOHEADER;
 #endif

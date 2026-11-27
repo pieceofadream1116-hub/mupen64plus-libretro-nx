@@ -93,8 +93,13 @@ jobs:
         shell: pwsh
         run: |
           $angle = (Resolve-Path out/pkgs/ANGLE.WindowsStore.2.1.13).Path
-          clang-cl --version
-          cmake -S Xbox/core -B out/core -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl `
+          # Visual Studio's own clang-cl (its STL wants the clang it ships with)
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vs = & $vswhere -latest -products * -property installationPath
+          $clang = Join-Path $vs 'VC\Tools\Llvm\x64\bin\clang-cl.exe'
+          if (!(Test-Path $clang)) { $clang = 'clang-cl' }
+          & $clang --version
+          cmake -S Xbox/core -B out/core -G Ninja "-DCMAKE_C_COMPILER=$clang" "-DCMAKE_CXX_COMPILER=$clang" `
             -DCMAKE_BUILD_TYPE=Release "-DANGLE_INCLUDE=$angle/Include"
           if ($LASTEXITCODE -ne 0) { throw 'Core configure failed' }
           cmake --build out/core -- -k 0

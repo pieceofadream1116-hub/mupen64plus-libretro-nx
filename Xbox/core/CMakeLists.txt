@@ -192,7 +192,7 @@ add_library(n64_core STATIC
 target_include_directories(n64_core PUBLIC
     "${N64_ROOT}/libretro" "${N64_ROOT}/libretro-common/include")
 target_include_directories(n64_core PRIVATE
-    "${ANGLE_INCLUDE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/compat" "${ANGLE_INCLUDE}"
     "${N64_ROOT}/custom" "${N64_ROOT}/custom/mupen64plus-core" "${N64_ROOT}/custom/android/include"
     "${N64_ROOT}/custom/GLideN64" "${N64_ROOT}/GLideN64/src" "${N64_ROOT}/GLideN64/src/osal"
     "${N64_ROOT}/mupen64plus-core/src" "${N64_ROOT}/mupen64plus-core/src/api"
@@ -201,11 +201,12 @@ target_include_directories(n64_core PRIVATE
     "${N64_ROOT}/xxHash" "${N64_ROOT}/custom/dependencies/libzlib" "${N64_ROOT}/mupen64plus-core/subprojects/md5")
 target_compile_definitions(n64_core PRIVATE
     # UWP (an Xbox in developer mode)
-    WINAPI_FAMILY=WINAPI_FAMILY_APP _WIN32_WINNT=0x0A00 UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN
+    _ALLOW_COMPILER_AND_STL_VERSION_MISMATCH WINAPI_FAMILY=WINAPI_FAMILY_APP _WIN32_WINNT=0x0A00 UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN
     _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_DEPRECATE
     # what the core's Makefile sets for a GLES3 build
     OS_WINDOWS EGL GLES3 HAVE_OPENGLES HAVE_OPENGLES3 GL_GLEXT_PROTOTYPES
     M64P_CORE_PROTOTYPES M64P_PLUGIN_API MUPENPLUSAPI SINC_LOWER_QUALITY TXFILTER_LIB USE_FILE32API _ENDUSER_RELEASE
     __LIBRETRO__ __STDC_CONSTANT_MACROS __STDC_LIMIT_MACROS __VEC4_OPT ARCH_MIN_SSE2 "GIT_VERSION=\"xbox\"")
-target_compile_options(n64_core PRIVATE /w /O2 /arch:AVX2 $<$<COMPILE_LANGUAGE:CXX>:/EHsc>)
+target_compile_options(n64_core PRIVATE /w /O2 /arch:AVX2 "/FI${CMAKE_CURRENT_SOURCE_DIR}/compat/n64_uwp.h"
+    $<$<COMPILE_LANGUAGE:CXX>:/EHsc>)
 set_target_properties(n64_core PROPERTIES CXX_STANDARD 17 C_STANDARD 11)
