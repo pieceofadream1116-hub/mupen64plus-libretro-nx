@@ -3,6 +3,7 @@
 #pragma once
 #include <windows.h>
 #include <process.h>
+#include <stdlib.h>
 
 typedef SRWLOCK pthread_mutex_t; /* zero = unlocked, like a static pthread mutex */
 typedef void pthread_mutexattr_t;
