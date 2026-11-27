@@ -5,7 +5,7 @@
 #include <cstddef>
 
 // Defined in mupen64plus-core main.c
-extern size_t rdram_size;
+extern "C" size_t rdram_size;
 
 extern "C" {
 

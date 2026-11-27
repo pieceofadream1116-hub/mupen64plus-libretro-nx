@@ -11,6 +11,7 @@ set(ANGLE_INCLUDE "" CACHE PATH "ANGLE's Include folder (EGL, GLES2, GLES3, KHR)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
 
 add_library(n64_core STATIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/compat/no_dynarec.c"
     "${N64_ROOT}/GLideN64/src/Combiner.cpp" "${N64_ROOT}/GLideN64/src/CombinerKey.cpp"
     "${N64_ROOT}/GLideN64/src/CommonPluginAPI.cpp" "${N64_ROOT}/GLideN64/src/Config.cpp"
     "${N64_ROOT}/GLideN64/src/convert.cpp" "${N64_ROOT}/GLideN64/src/DebugDump.cpp"

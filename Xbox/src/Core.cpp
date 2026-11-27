@@ -421,6 +421,28 @@ void Core::Unload()
 	_newFrame = false;
 }
 
+void Core::WriteBatterySave()
+{
+	void* sram = retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
+	size_t size = retro_get_memory_size(RETRO_MEMORY_SAVE_RAM);
+	if(!sram || !size || _game.empty()) {
+		return;
+	}
+	// Games without a battery leave the save RAM blank (filled with 0xFF or zero)
+	const uint8_t* bytes = static_cast<const uint8_t*>(sram);
+	bool used = false;
+	for(size_t i = 0; i < size && !used; i++) {
+		used = bytes[i] != 0xFF && bytes[i] != 0x00;
+	}
+	if(!used) {
+		return;
+	}
+	std::error_code ec;
+	fs::create_directories(_savesDir, ec);
+	std::ofstream out(_savesDir / (_game.stem().wstring() + L".srm"), std::ios::binary | std::ios::trunc);
+	out.write(static_cast<const char*>(sram), (std::streamsize)size);
+}
+
 bool Core::OnCoreThread(std::function<bool()> job)
 {
 	if(!_loaded || std::this_thread::get_id() == _thread.get_id()) {
