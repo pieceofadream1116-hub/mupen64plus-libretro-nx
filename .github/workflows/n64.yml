@@ -1,0 +1,174 @@
+# Builds N64, the Xbox (UWP) app made from Mupen64Plus-Next (GLideN64 through ANGLE), and publishes the install files.
+#
+# Every push to the main branch replaces the release named in RELEASE_TAG, so the files are always at the same
+# links (no zip):
+#   releases/download/<tag>/N64.msix   the app
+#   releases/download/<tag>/Microsoft.VCLibs.x64.14.00.appx   its dependency (add it next to the app)
+#   releases/download/<tag>/N64.cer    the test certificate (for installing on a Windows PC)
+name: N64 (Xbox)
+
+on:
+  push:
+    branches: ['xbox/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: n64-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SDL3_UWP_REPO: https://github.com/SternXD/SDL3-uwp.git
+  SDL3_UWP_COMMIT: ddd5d4f99a26ac95d4620ccf489c07fcf5f08636
+  RELEASE_TAG: latest
+
+jobs:
+  build:
+    name: Build N64 (x64)
+    runs-on: windows-2025
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Pick Visual Studio
+        id: vs
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          & $vswhere -products * -format text -property displayName
+          cmake --version
+          $has2026 = [bool](& $vswhere -products * -version '[18.0,19.0)' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath)
+          $cmake2026 = [bool]((cmake --help) -match 'Visual Studio 18 2026')
+          $generator = if ($has2026 -and $cmake2026) { 'Visual Studio 18 2026' } else { 'Visual Studio 17 2022' }
+          Write-Host "Generator: $generator"
+          "generator=$generator" >> $env:GITHUB_OUTPUT
+
+      - name: Compute version
+        id: version
+        shell: pwsh
+        run: |
+          $cmake = Get-Content Xbox/CMakeLists.txt -Raw
+          if ($cmake -notmatch 'project\(N64Xbox VERSION (\d+)\.(\d+)\.(\d+)') { throw 'Could not read the version' }
+          $version = "$($Matches[1]).$($Matches[2]).$($Matches[3]).$env:GITHUB_RUN_NUMBER"
+          Write-Host "Package version: $version"
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Cache SDL3-uwp
+        uses: actions/cache@v4
+        with:
+          path: out/uwp-deps
+          key: sdl3-uwp-${{ env.SDL3_UWP_COMMIT }}-${{ steps.vs.outputs.generator }}
+
+      - name: Build SDL3-uwp
+        shell: pwsh
+        run: |
+          if (Test-Path out/uwp-deps/bin/SDL3.dll) { Write-Host 'SDL3-uwp restored from cache'; exit 0 }
+          git init out/SDL3-uwp
+          git -C out/SDL3-uwp remote add origin $env:SDL3_UWP_REPO
+          git -C out/SDL3-uwp fetch --depth 1 origin $env:SDL3_UWP_COMMIT
+          if ($LASTEXITCODE -ne 0) { throw 'Could not download SDL3-uwp' }
+          git -C out/SDL3-uwp checkout FETCH_HEAD
+          cmake -S out/SDL3-uwp -B out/SDL3-build -G "${{ steps.vs.outputs.generator }}" -A x64 `
+            "-DCMAKE_SYSTEM_NAME=WindowsStore" "-DCMAKE_SYSTEM_VERSION=10.0" "-DCMAKE_INSTALL_PREFIX=$PWD/out/uwp-deps" `
+            -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TEST_LIBRARY=OFF -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'SDL3-uwp configure failed' }
+          cmake --build out/SDL3-build --config Release --target install -- /m /v:minimal
+          if ($LASTEXITCODE -ne 0) { throw 'SDL3-uwp build failed' }
+
+      - name: Get ANGLE (OpenGL ES for UWP)
+        shell: pwsh
+        run: |
+          nuget install ANGLE.WindowsStore -Version 2.1.13 -OutputDirectory out/pkgs
+          if ($LASTEXITCODE -ne 0) { throw 'Could not download ANGLE' }
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build the core (clang-cl)
+        shell: pwsh
+        run: |
+          $angle = (Resolve-Path out/pkgs/ANGLE.WindowsStore.2.1.13).Path
+          clang-cl --version
+          cmake -S Xbox/core -B out/core -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl `
+            -DCMAKE_BUILD_TYPE=Release "-DANGLE_INCLUDE=$angle/Include"
+          if ($LASTEXITCODE -ne 0) { throw 'Core configure failed' }
+          cmake --build out/core -- -k 0
+          if ($LASTEXITCODE -ne 0) { throw 'Core build failed' }
+
+      - name: Configure N64
+        shell: pwsh
+        run: |
+          cmake -S Xbox -B out/xbox -G "${{ steps.vs.outputs.generator }}" -A x64 `
+            "-DCMAKE_SYSTEM_NAME=WindowsStore" "-DCMAKE_SYSTEM_VERSION=10.0" "-DCMAKE_PREFIX_PATH=$PWD/out/uwp-deps" `
+            "-DAPP_PACKAGE_VERSION=${{ steps.version.outputs.version }}" `
+            "-DN64_CORE_LIB=$PWD/out/core/n64_core.lib" "-DANGLE_ROOT=$PWD/out/pkgs/ANGLE.WindowsStore.2.1.13"
+          if ($LASTEXITCODE -ne 0) { throw 'Configure failed' }
+
+      - name: Build N64
+        shell: pwsh
+        run: |
+          cmake --build out/xbox --config Release --target N64 -- /m /v:minimal
+          if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
+
+      - name: Collect install files
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          $msix = Get-ChildItem out/xbox -Recurse -Filter *.msix | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (!$msix) { throw 'No .msix was made' }
+          Copy-Item $msix.FullName dist/N64.msix
+          $vclibs = Get-ChildItem $msix.Directory.FullName -Recurse -Filter 'Microsoft.VCLibs.x64.14.00.appx' | Select-Object -First 1
+          if (!$vclibs) {
+            $vclibs = Get-ChildItem "${env:ProgramFiles(x86)}\Microsoft SDKs\Windows Kits\10\ExtensionSDKs\Microsoft.VCLibs" -Recurse -Filter 'Microsoft.VCLibs.x64.14.00.appx' |
+              Where-Object { $_.FullName -match 'Retail' } | Select-Object -First 1
+          }
+          if ($vclibs) { Copy-Item $vclibs.FullName dist/ } else { Write-Warning 'Microsoft.VCLibs .appx not found' }
+          $cer = Get-ChildItem $msix.Directory.FullName -Filter *.cer | Select-Object -First 1
+          if ($cer) { Copy-Item $cer.FullName dist/N64.cer }
+          Get-ChildItem dist
+
+      - name: Upload crash lookup map
+        uses: actions/upload-artifact@v4
+        with:
+          name: n64-${{ steps.version.outputs.version }}-map
+          path: out/xbox/N64.map
+          if-no-files-found: warn
+
+      - name: Upload install files
+        uses: actions/upload-artifact@v4
+        with:
+          name: n64-${{ steps.version.outputs.version }}
+          path: dist/*
+          compression-level: 0
+
+  latest:
+    name: Publish latest build
+    if: github.ref == 'refs/heads/xbox/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download install files
+        uses: actions/download-artifact@v4
+        with:
+          name: n64-${{ needs.build.outputs.version }}
+          path: dist
+
+      - name: Replace the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          ls -la dist
+          notes="N64 for Xbox, version $VERSION. Made from Mupen64Plus-Next (https://github.com/libretro/mupen64plus-libretro-nx), GPL-2.0, source in this repository, with ANGLE (BSD) for the graphics.
+          On the Xbox Device Portal, add N64.msix, and add the Microsoft.VCLibs .appx file as its dependency.
+          Games are found in ES-DE\\ROMs\\n64 on your drive, or an N64\\Games folder."
+          gh release delete "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
+          gh release create "$RELEASE_TAG" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "N64 (latest build $VERSION)" --notes "$notes"
